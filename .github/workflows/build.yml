@@ -1,7 +1,5 @@
 name: Build
 
-# 注意：如果你没有配置名为 PAT 的 Secret，最后的 deploy 步骤会报错，但不影响你下载编译好的插件 DLL。
-
 on: 
   workflow_dispatch:
   push:
@@ -12,8 +10,8 @@ env:
   PUBLIC_NAME: XIVComboExpandedest
   SOLUTION_NAME: XIVComboExpanded
   INTERNAL_NAME: XIVComboExpandedest
-  # 修改点1：路径适配.NET 10，使用了通配符 ** 确保能抓取到 net10.0-windows 文件夹下的内容
-  RELEASE_DIR: "**/bin/Release/**/XIVComboExpandedest/"
+  # 统一输出到根目录下的 out 文件夹，不再使用复杂的 bin/Release 路径
+  RELEASE_DIR: "out/"
   PERSONAL_PLUGIN_REPO: grammernatzi/MyDalamudPlugins
   PR_PLUGIN_REPO: grammernatzi/DalamudPlugins
 
@@ -26,29 +24,32 @@ jobs:
       with:
         submodules: recursive
 
-    # 修改点2：显式准备.NET 10 环境，否则服务器可能找不到编译器
     - name: Setup.NET 10
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0.x'
 
-    # 修改点3：升级 MSBuild 插件到 v2，解决你提到的 set-output 警告报错
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
     - name: Download Dalamud
       run: |
         Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/api14/latest.zip -OutFile latest.zip
+        if (!(Test-Path "$env:AppData\XIVLauncher\addon\Hooks\dev\")) { New-Item -ItemType Directory -Force -Path "$env:AppData\XIVLauncher\addon\Hooks\dev\" }
         Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev\"   
 
     - name: Build
       run: |
         dotnet restore -r win ${{ env.SOLUTION_NAME }}.sln
-        dotnet build --configuration Release
+        # 核心修复：添加 -o out 参数，强行将所有编译好的 DLL 放到根目录的 out 文件夹
+        dotnet build ${{ env.SOLUTION_NAME }}.sln --configuration Release -o out/
       env: 
         DOTNET_CLI_TELEMETRY_OPTOUT: true
 
-    # 修改点4：上传产物时使用更智能的路径匹配
+    # 调试步骤：万一还是找不到，这步会在日志里列出所有文件，方便我们查错
+    - name: List Files (Debug)
+      run: ls -R out/
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
@@ -58,7 +59,6 @@ jobs:
 
   deploy:
     needs: build
-    # 只有在你通过推送（Push）且提交信息包含 时才会执行
     if: "contains(toJSON(github.event.commits.*.message), '')"
     runs-on: ubuntu-latest
     steps:
