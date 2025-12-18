@@ -1,6 +1,6 @@
 name: Build
 
-# Put your personal access token in a repository secret named PAT for cross-repository access
+# 注意：如果你没有配置名为 PAT 的 Secret，最后的 deploy 步骤会报错，但不影响你下载编译好的插件 DLL。
 
 on: 
   workflow_dispatch:
@@ -12,7 +12,8 @@ env:
   PUBLIC_NAME: XIVComboExpandedest
   SOLUTION_NAME: XIVComboExpanded
   INTERNAL_NAME: XIVComboExpandedest
-  RELEASE_DIR: XIVComboExpanded\bin\Release\XIVComboExpandedest
+  # 修改点1：路径适配.NET 10，使用了通配符 ** 确保能抓取到 net10.0-windows 文件夹下的内容
+  RELEASE_DIR: "**/bin/Release/**/XIVComboExpandedest/"
   PERSONAL_PLUGIN_REPO: grammernatzi/MyDalamudPlugins
   PR_PLUGIN_REPO: grammernatzi/DalamudPlugins
 
@@ -24,19 +25,32 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: recursive
+
+    # 修改点2：显式准备.NET 10 环境，否则服务器可能找不到编译器
+    - name: Setup.NET 10
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    # 修改点3：升级 MSBuild 插件到 v2，解决你提到的 set-output 警告报错
     - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v1.0.2
+      uses: microsoft/setup-msbuild@v2
+
     - name: Download Dalamud
       run: |
         Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/api14/latest.zip -OutFile latest.zip
         Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev\"   
+
     - name: Build
       run: |
         dotnet restore -r win ${{ env.SOLUTION_NAME }}.sln
         dotnet build --configuration Release
       env: 
         DOTNET_CLI_TELEMETRY_OPTOUT: true
-    - uses: actions/upload-artifact@v4
+
+    # 修改点4：上传产物时使用更智能的路径匹配
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
       with:
         name: PluginRepoZip
         path: ${{ env.RELEASE_DIR }}
@@ -44,7 +58,8 @@ jobs:
 
   deploy:
     needs: build
-    if: "contains(toJSON(github.event.commits.*.message), '[PUSH]')"
+    # 只有在你通过推送（Push）且提交信息包含 时才会执行
+    if: "contains(toJSON(github.event.commits.*.message), '')"
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -61,4 +76,3 @@ jobs:
         author_name: GitHub Action
         author_email: github-actions[bot]@users.noreply.github.com
         message: Update ${{ env.INTERNAL_NAME }}
-
